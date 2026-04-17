@@ -1,13 +1,48 @@
+# Anything in here is excluded from the deployment bundle (in addition to
+# .gitignore). Belt-and-suspenders against accidentally shipping dev junk.
+
+# Local Python virtualenvs (also gitignored, but defensive)
 .venv
+**/.venv
+venv
+
+# Python build / test cache
 **/__pycache__
 **/*.pyc
 **/.pytest_cache
-backend/tests
-backend/.env
+**/.mypy_cache
+**/.ruff_cache
+*.egg-info
+
+# Local databases
 *.db
 *.sqlite
 *.sqlite3
+
+# Local env files
+.env
+.env.local
+backend/.env
+backend/.env.local
+
+# Backend dev-only assets (not needed by the serverless function)
+backend/tests
+backend/alembic.ini
+backend/.env.example
+backend/requirements.txt
+
+# Frontend source/dev artefacts (the static build is in frontend/dist;
+# Vercel takes that via outputDirectory, not from here)
+frontend/node_modules
+frontend/src
+frontend/public
+frontend/index.html
+frontend/vite.config.ts
+frontend/tsconfig*.json
+frontend/package*.json
+
+# Misc
 .git
 node_modules
-frontend/node_modules
+RECAP.md
 README.dev.md
