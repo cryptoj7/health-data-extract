@@ -11,11 +11,17 @@ import type {
 const STORAGE_KEY_API = "hde.apiBaseUrl";
 const STORAGE_KEY_KEY = "hde.apiKey";
 
+// Build-time defaults from Vite env vars (`frontend/.env.local` for local dev,
+// Vercel project env vars for production). Anything saved via the Settings UI
+// takes precedence over these.
+const DEFAULT_API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
+const DEFAULT_API_KEY = import.meta.env.VITE_API_KEY ?? "";
+
 export function getApiBaseUrl(): string {
   const stored = localStorage.getItem(STORAGE_KEY_API);
-  if (stored) return stored;
+  if (stored !== null) return stored;
   // Default: same origin (works when frontend & API deployed together on Vercel)
-  return "";
+  return DEFAULT_API_BASE_URL;
 }
 
 export function setApiBaseUrl(url: string): void {
@@ -24,7 +30,9 @@ export function setApiBaseUrl(url: string): void {
 }
 
 export function getApiKey(): string {
-  return localStorage.getItem(STORAGE_KEY_KEY) ?? "";
+  const stored = localStorage.getItem(STORAGE_KEY_KEY);
+  if (stored !== null) return stored;
+  return DEFAULT_API_KEY;
 }
 
 export function setApiKey(key: string): void {
