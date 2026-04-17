@@ -1,4 +1,11 @@
 """Persistence for the Order aggregate."""
+# Defer all annotation evaluation: our `list(...)` method shadows the
+# built-in, so eager evaluation (Python 3.12 default on Vercel) breaks
+# any later `list[...]` type annotation in this class with a confusing
+# "'function' object is not subscriptable" error. Local Python 3.14
+# defers annotations by default and hides the bug.
+from __future__ import annotations
+
 from typing import Optional, Protocol, Tuple
 
 from sqlalchemy import func, select

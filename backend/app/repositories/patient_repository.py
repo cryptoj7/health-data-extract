@@ -1,4 +1,9 @@
 """Persistence for the Patient aggregate."""
+# Same reason as order_repository.py: defer annotation evaluation so the
+# `list(...)` method doesn't shadow the built-in and break later
+# `list[...]` annotations on Python 3.12.
+from __future__ import annotations
+
 from datetime import date
 from typing import Optional, Protocol, Tuple
 
