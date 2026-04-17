@@ -14,6 +14,14 @@
 **/.venv
 venv
 
+# Dev-only Python deps (uvicorn, pdfplumber, pytest, etc.) — must NEVER
+# end up in the production install. Renaming guards against the Vercel
+# @vercel/python builder discovering them; this is a second line of defense.
+backend/requirements-dev.txt
+**/requirements-dev.txt
+backend/tests
+backend/alembic.ini
+
 # Python build / test cache
 **/__pycache__
 **/*.pyc
