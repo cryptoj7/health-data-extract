@@ -16,6 +16,7 @@ from app.middleware.activity_logger import ActivityLoggerMiddleware
 from app.middleware.error_handlers import register_exception_handlers
 from app.middleware.rate_limit import limiter
 from app.middleware.request_context import RequestContextMiddleware
+from app.middleware.security_headers import SecurityHeadersMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
         expose_headers=["X-Request-ID", "X-Response-Time-ms"],
     )
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(ActivityLoggerMiddleware)
 

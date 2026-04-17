@@ -21,8 +21,23 @@ def list_activity_logs(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     path_contains: Optional[str] = Query(None, description="Filter by URL path substring"),
+    action: Optional[str] = Query(
+        None, description="Filter by semantic action name (e.g. 'order.created')"
+    ),
+    resource_type: Optional[str] = Query(
+        None, description="Filter by resource type (e.g. 'order', 'extraction')"
+    ),
+    resource_id: Optional[str] = Query(
+        None, description="Filter by resource id — useful for 'what happened to order X?' queries"
+    ),
     db: Session = Depends(get_db),
 ) -> ActivityLogListResponse:
     return ActivityLogController.list(
-        db, limit=limit, offset=offset, path_contains=path_contains
+        db,
+        limit=limit,
+        offset=offset,
+        path_contains=path_contains,
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
     )

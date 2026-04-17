@@ -23,8 +23,16 @@ router = APIRouter(
     status_code=status.HTTP_201_CREATED,
     summary="Create a new order",
 )
-def create_order(payload: OrderCreate, db: Session = Depends(get_db)) -> OrderRead:
-    return OrderController.create(db, payload)
+def create_order(
+    payload: OrderCreate,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> OrderRead:
+    order = OrderController.create(db, payload)
+    # Surface the new ID via a header so the activity-logger middleware can
+    # tag this request with the resource_id without re-reading the response.
+    response.headers["X-Resource-ID"] = order.id
+    return order
 
 
 @router.get("", response_model=OrderListResponse, summary="List orders")

@@ -14,10 +14,18 @@ class ActivityLogController:
         *,
         limit: int,
         offset: int,
-        path_contains: Optional[str],
+        path_contains: Optional[str] = None,
+        action: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
     ) -> ActivityLogListResponse:
         items, total = ActivityLogRepository(db).list(
-            limit=limit, offset=offset, path_contains=path_contains
+            limit=limit,
+            offset=offset,
+            path_contains=path_contains,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
         )
         return ActivityLogListResponse(
             items=[ActivityLogRead.model_validate(i) for i in items],

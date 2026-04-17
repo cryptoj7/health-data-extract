@@ -88,12 +88,13 @@ export function ActivityPanel({ refreshKey }: Props) {
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-ink-500">
                   <th className="border-b border-ink-200 py-3 pr-3">Time</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Action</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Resource</th>
                   <th className="border-b border-ink-200 py-3 pr-3">Method</th>
                   <th className="border-b border-ink-200 py-3 pr-3">Path</th>
                   <th className="border-b border-ink-200 py-3 pr-3">Status</th>
                   <th className="border-b border-ink-200 py-3 pr-3">Duration</th>
                   <th className="border-b border-ink-200 py-3 pr-3">Actor</th>
-                  <th className="border-b border-ink-200 py-3 pr-3">IP</th>
                 </tr>
               </thead>
               <tbody>
@@ -104,6 +105,27 @@ export function ActivityPanel({ refreshKey }: Props) {
                   >
                     <td className="border-b border-ink-100 py-3 pr-3 text-ink-500 whitespace-nowrap">
                       {new Date(l.created_at).toLocaleString()}
+                    </td>
+                    <td className="border-b border-ink-100 py-3 pr-3">
+                      {l.action ? (
+                        <span className="font-medium text-ink-900">{l.action}</span>
+                      ) : (
+                        <span className="text-ink-400">—</span>
+                      )}
+                    </td>
+                    <td className="border-b border-ink-100 py-3 pr-3 text-ink-500">
+                      {l.resource_type ? (
+                        <>
+                          <span>{l.resource_type}</span>
+                          {l.resource_id && (
+                            <code className="ml-1.5 rounded bg-ink-100 px-1.5 py-0.5 text-xs text-ink-700">
+                              {l.resource_id.slice(0, 8)}
+                            </code>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-ink-400">—</span>
+                      )}
                     </td>
                     <td className="border-b border-ink-100 py-3 pr-3">
                       <code className="rounded bg-ink-100 px-1.5 py-0.5 text-xs text-ink-700">
@@ -125,9 +147,6 @@ export function ActivityPanel({ refreshKey }: Props) {
                     </td>
                     <td className="border-b border-ink-100 py-3 pr-3 text-ink-500">
                       {l.actor ?? "—"}
-                    </td>
-                    <td className="border-b border-ink-100 py-3 pr-3 text-ink-500 whitespace-nowrap">
-                      {l.client_ip ?? "—"}
                     </td>
                   </tr>
                 ))}

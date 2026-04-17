@@ -10,6 +10,7 @@ from app.schemas.extraction import ExtractionResponse
 from app.schemas.order import OrderCreate
 from app.repositories.order_repository import OrderRepository
 from app.services.extraction import extract_patient_info
+from app.services.extraction_cache import extraction_cache, hash_bytes
 from app.services.pdf_text import extract_text_from_pdf, render_pdf_pages_to_png
 
 
@@ -53,31 +54,46 @@ class ExtractionController:
                 detail="File does not appear to be a valid PDF",
             )
 
-        try:
-            text = extract_text_from_pdf(contents)
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Could not read PDF contents: {e}",
-            )
+        # Content-hash dedupe: if we've already extracted the same byte-for-byte
+        # PDF on this container, return the cached patient info. Saves an LLM
+        # round-trip and demonstrably costs less. The text-preview is omitted
+        # for cache hits since we no longer have the parsed text.
+        content_hash = hash_bytes(contents)
+        cached = extraction_cache.get(content_hash)
 
-        # Render page images for vision fallback when text is empty (scanned PDFs).
-        # Resolution and page-count are env-configurable so we can keep the memory
-        # footprint small in serverless (Vercel: 1 GB / 30 s) while letting local
-        # devs crank it up for sharper OCR on tiny print.
-        page_pngs: list[bytes] = []
-        if not text.strip() and settings.openai_api_key:
+        text = ""
+        if cached is None:
             try:
-                page_pngs = render_pdf_pages_to_png(
-                    contents,
-                    max_pages=settings.vision_max_pages,
-                    scale=settings.vision_render_scale,
+                text = extract_text_from_pdf(contents)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Could not read PDF contents: {e}",
                 )
-            except Exception:
-                # Non-fatal — we still try the regex/text path
-                page_pngs = []
 
-        extracted = extract_patient_info(text, page_pngs=page_pngs)
+            # Render page images for vision fallback when text is empty (scanned
+            # PDFs). Resolution and page-count are env-configurable so we can keep
+            # the memory footprint small in serverless (Vercel: 1 GB / 30 s) while
+            # letting local devs crank it up for sharper OCR on tiny print.
+            page_pngs: list[bytes] = []
+            if not text.strip() and settings.openai_api_key:
+                try:
+                    page_pngs = render_pdf_pages_to_png(
+                        contents,
+                        max_pages=settings.vision_max_pages,
+                        scale=settings.vision_render_scale,
+                    )
+                except Exception:
+                    page_pngs = []
+
+            extracted = extract_patient_info(text, page_pngs=page_pngs)
+            extraction_cache.put(content_hash, extracted)
+        else:
+            extracted = cached
+            # Mark the source so callers can tell this came from the cache,
+            # which is genuinely useful for debugging "wait, why did this come
+            # back in 50 ms?".
+            extracted.source = f"{extracted.source}+cache"
 
         order_id: Optional[str] = None
         if create_order:

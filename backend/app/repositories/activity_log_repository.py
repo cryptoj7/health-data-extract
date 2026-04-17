@@ -15,6 +15,9 @@ class ActivityLogRepositoryProtocol(Protocol):
         path: str,
         status_code: int,
         duration_ms: int,
+        action: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
         actor: Optional[str] = None,
         client_ip: Optional[str] = None,
         user_agent: Optional[str] = None,
@@ -28,6 +31,9 @@ class ActivityLogRepositoryProtocol(Protocol):
         limit: int = 100,
         offset: int = 0,
         path_contains: Optional[str] = None,
+        action: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
     ) -> Tuple[list[ActivityLog], int]: ...
 
 
@@ -44,6 +50,9 @@ class ActivityLogRepository:
         path: str,
         status_code: int,
         duration_ms: int,
+        action: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
         actor: Optional[str] = None,
         client_ip: Optional[str] = None,
         user_agent: Optional[str] = None,
@@ -55,6 +64,9 @@ class ActivityLogRepository:
             path=path,
             status_code=status_code,
             duration_ms=duration_ms,
+            action=action,
+            resource_type=resource_type,
+            resource_id=resource_id,
             actor=actor,
             client_ip=client_ip,
             user_agent=user_agent,
@@ -72,6 +84,9 @@ class ActivityLogRepository:
         limit: int = 100,
         offset: int = 0,
         path_contains: Optional[str] = None,
+        action: Optional[str] = None,
+        resource_type: Optional[str] = None,
+        resource_id: Optional[str] = None,
     ) -> Tuple[list[ActivityLog], int]:
         stmt = select(ActivityLog)
         count_stmt = select(func.count()).select_from(ActivityLog)
@@ -80,6 +95,15 @@ class ActivityLogRepository:
             like = f"%{path_contains}%"
             stmt = stmt.where(ActivityLog.path.like(like))
             count_stmt = count_stmt.where(ActivityLog.path.like(like))
+        if action:
+            stmt = stmt.where(ActivityLog.action == action)
+            count_stmt = count_stmt.where(ActivityLog.action == action)
+        if resource_type:
+            stmt = stmt.where(ActivityLog.resource_type == resource_type)
+            count_stmt = count_stmt.where(ActivityLog.resource_type == resource_type)
+        if resource_id:
+            stmt = stmt.where(ActivityLog.resource_id == resource_id)
+            count_stmt = count_stmt.where(ActivityLog.resource_id == resource_id)
 
         stmt = stmt.order_by(ActivityLog.created_at.desc()).limit(limit).offset(offset)
 

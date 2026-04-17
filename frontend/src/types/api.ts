@@ -56,6 +56,9 @@ export interface ActivityLog {
   path: string;
   status_code: number;
   duration_ms: number;
+  action: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
   actor: string | null;
   client_ip: string | null;
   user_agent: string | null;

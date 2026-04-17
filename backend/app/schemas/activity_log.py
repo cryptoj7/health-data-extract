@@ -13,6 +13,9 @@ class ActivityLogRead(BaseModel):
     path: str
     status_code: int
     duration_ms: int
+    action: Optional[str]
+    resource_type: Optional[str]
+    resource_id: Optional[str]
     actor: Optional[str]
     client_ip: Optional[str]
     user_agent: Optional[str]
