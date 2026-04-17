@@ -41,81 +41,101 @@ export function ActivityPanel({ refreshKey }: Props) {
   }, [refreshKey]);
 
   return (
-    <div className="card">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="m-0 text-base font-semibold text-slate-900">Activity Log</h2>
-        <div className="flex flex-wrap gap-2">
-          <input
-            className="input w-56"
-            placeholder="Filter by path…"
-            value={pathFilter}
-            onChange={(e) => setPathFilter(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && load()}
-          />
-          <button className="btn-secondary" onClick={load} disabled={loading}>
-            {loading ? "Loading…" : "Refresh"}
-          </button>
+    <>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-ink-900">
+            Activity
+          </h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Audit trail of every request handled by the service.
+          </p>
         </div>
       </div>
 
-      {error && (
-        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-800">
-          {error}
+      <div className="card">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
+            <input
+              className="input w-64"
+              placeholder="Filter by path…"
+              value={pathFilter}
+              onChange={(e) => setPathFilter(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && load()}
+            />
+            <button className="btn-secondary" onClick={load} disabled={loading}>
+              {loading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+          <span className="text-sm text-ink-500">
+            {logs.length} record{logs.length === 1 ? "" : "s"}
+          </span>
         </div>
-      )}
 
-      {logs.length === 0 && !loading ? (
-        <div className="py-10 text-center text-sm text-slate-500">No activity yet.</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
-                <th className="border-b border-slate-200 px-3 py-2.5">Time</th>
-                <th className="border-b border-slate-200 px-3 py-2.5">Method</th>
-                <th className="border-b border-slate-200 px-3 py-2.5">Path</th>
-                <th className="border-b border-slate-200 px-3 py-2.5">Status</th>
-                <th className="border-b border-slate-200 px-3 py-2.5">Duration</th>
-                <th className="border-b border-slate-200 px-3 py-2.5">Actor</th>
-                <th className="border-b border-slate-200 px-3 py-2.5">IP</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((l) => (
-                <tr key={l.id} className="hover:bg-slate-50/60">
-                  <td className="border-b border-slate-200 px-3 py-2.5 text-slate-500">
-                    {new Date(l.created_at).toLocaleString()}
-                  </td>
-                  <td className="border-b border-slate-200 px-3 py-2.5">
-                    <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">
-                      {l.method}
-                    </code>
-                  </td>
-                  <td className="border-b border-slate-200 px-3 py-2.5">
-                    <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">
-                      {l.path}
-                    </code>
-                  </td>
-                  <td className="border-b border-slate-200 px-3 py-2.5">
-                    <span className={statusBadge(l.status_code)}>
-                      {l.status_code}
-                    </span>
-                  </td>
-                  <td className="border-b border-slate-200 px-3 py-2.5 text-slate-500">
-                    {l.duration_ms} ms
-                  </td>
-                  <td className="border-b border-slate-200 px-3 py-2.5 text-slate-500">
-                    {l.actor ?? "—"}
-                  </td>
-                  <td className="border-b border-slate-200 px-3 py-2.5 text-slate-500">
-                    {l.client_ip ?? "—"}
-                  </td>
+        {error && (
+          <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {error}
+          </div>
+        )}
+
+        {logs.length === 0 && !loading ? (
+          <div className="py-12 text-center text-sm text-ink-500">
+            No activity recorded yet.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase tracking-wider text-ink-500">
+                  <th className="border-b border-ink-200 py-3 pr-3">Time</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Method</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Path</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Status</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Duration</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Actor</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">IP</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+              </thead>
+              <tbody>
+                {logs.map((l) => (
+                  <tr
+                    key={l.id}
+                    className="transition-colors hover:bg-ink-50/60"
+                  >
+                    <td className="border-b border-ink-100 py-3 pr-3 text-ink-500 whitespace-nowrap">
+                      {new Date(l.created_at).toLocaleString()}
+                    </td>
+                    <td className="border-b border-ink-100 py-3 pr-3">
+                      <code className="rounded bg-ink-100 px-1.5 py-0.5 text-xs text-ink-700">
+                        {l.method}
+                      </code>
+                    </td>
+                    <td className="border-b border-ink-100 py-3 pr-3">
+                      <code className="rounded bg-ink-100 px-1.5 py-0.5 text-xs text-ink-700">
+                        {l.path}
+                      </code>
+                    </td>
+                    <td className="border-b border-ink-100 py-3 pr-3">
+                      <span className={statusBadge(l.status_code)}>
+                        {l.status_code}
+                      </span>
+                    </td>
+                    <td className="border-b border-ink-100 py-3 pr-3 text-ink-500 whitespace-nowrap">
+                      {l.duration_ms} ms
+                    </td>
+                    <td className="border-b border-ink-100 py-3 pr-3 text-ink-500">
+                      {l.actor ?? "—"}
+                    </td>
+                    <td className="border-b border-ink-100 py-3 pr-3 text-ink-500 whitespace-nowrap">
+                      {l.client_ip ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

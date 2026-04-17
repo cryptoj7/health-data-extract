@@ -79,15 +79,15 @@ body,
            shadow-ink-900/[0.03];
   }
 
-  .pill {
-    @apply inline-flex cursor-pointer items-center rounded-full px-3.5 py-1.5
-           text-sm font-medium transition-colors;
-  }
   .pill-active {
-    @apply pill bg-brand-600 text-white shadow-sm shadow-brand-600/30;
+    @apply inline-flex cursor-pointer items-center rounded-full bg-brand-600
+           px-3.5 py-1.5 text-sm font-medium text-white shadow-sm
+           shadow-brand-600/30 transition-colors;
   }
   .pill-inactive {
-    @apply pill text-ink-600 hover:bg-ink-100 hover:text-ink-900;
+    @apply inline-flex cursor-pointer items-center rounded-full px-3.5 py-1.5
+           text-sm font-medium text-ink-600 transition-colors hover:bg-ink-100
+           hover:text-ink-900;
   }
 
   .badge-pending {
