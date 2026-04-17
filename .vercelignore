@@ -1,7 +1,15 @@
-# Anything in here is excluded from the deployment bundle (in addition to
-# .gitignore). Belt-and-suspenders against accidentally shipping dev junk.
+# Anything in here is excluded from the upload to Vercel (in addition to
+# what .gitignore already handles). Belt-and-suspenders against shipping
+# dev junk.
+#
+# IMPORTANT: this file affects what gets *uploaded to Vercel* for the
+# build, NOT what ends up in the serverless function bundle. The function
+# bundle is controlled separately by `functions.<file>.includeFiles` in
+# vercel.json. So don't ignore frontend/ stuff here -- Vercel needs it to
+# run `npm install && npm run build`. The function only includes
+# backend/app/** per vercel.json.
 
-# Local Python virtualenvs (also gitignored, but defensive)
+# Local Python virtualenvs
 .venv
 **/.venv
 venv
@@ -19,29 +27,19 @@ venv
 *.sqlite
 *.sqlite3
 
-# Local env files
+# Local env files (never ship secrets)
 .env
 .env.local
 backend/.env
 backend/.env.local
+frontend/.env
+frontend/.env.local
 
-# Backend dev-only assets (not needed by the serverless function)
-backend/tests
-backend/alembic.ini
-backend/.env.example
-backend/requirements.txt
-
-# Frontend source/dev artefacts (the static build is in frontend/dist;
-# Vercel takes that via outputDirectory, not from here)
+# Frontend build output: Vercel rebuilds it; uploading it just wastes time
+frontend/dist
 frontend/node_modules
-frontend/src
-frontend/public
-frontend/index.html
-frontend/vite.config.ts
-frontend/tsconfig*.json
-frontend/package*.json
 
-# Misc
+# Misc dev / repo metadata
 .git
 node_modules
 RECAP.md
