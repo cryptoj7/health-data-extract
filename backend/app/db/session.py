@@ -27,12 +27,25 @@ def _normalise_database_url(url: str) -> str:
 
 _database_url = _normalise_database_url(settings.database_url)
 
-# SQLite needs check_same_thread=False when used with FastAPI's threadpool.
-connect_args = {"check_same_thread": False} if _database_url.startswith("sqlite") else {}
+
+def _connect_args_for(url: str) -> dict:
+    if url.startswith("sqlite"):
+        # SQLite needs this when used with FastAPI's threadpool.
+        return {"check_same_thread": False}
+    if url.startswith("postgresql+psycopg"):
+        # Disable prepared statements for psycopg3. This is required when running
+        # against a pooled Postgres connection in transaction mode (e.g. Neon's
+        # `-pooler` endpoint, Supabase's pgBouncer, RDS Proxy) and is harmless on
+        # direct connections. Without this, the second use of any prepared
+        # statement on a recycled backend session raises:
+        #   "prepared statement does not exist".
+        return {"prepare_threshold": None}
+    return {}
+
 
 engine = create_engine(
     _database_url,
-    connect_args=connect_args,
+    connect_args=_connect_args_for(_database_url),
     pool_pre_ping=True,
     future=True,
 )
