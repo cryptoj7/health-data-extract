@@ -35,7 +35,7 @@ records via a REST API. Every API request is logged to a database for auditing.
 │   │   ├── services/        # Business logic (PDF text extraction, LLM orchestration)
 │   │   └── main.py          # FastAPI app factory
 │   ├── tests/               # pytest suite (unit + integration)
-│   ├── requirements.txt
+│   ├── requirements-dev.txt # local-dev deps (uvicorn, pdfplumber, pytest...)
 │   └── .env.example
 ├── frontend/                # React + TS + Vite app
 │   ├── src/
@@ -97,7 +97,7 @@ Every error response uses a consistent shape:
 ```bash
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt    # dev: includes uvicorn, pdfplumber, pytest
 cp .env.example .env  # then edit
 uvicorn app.main:app --reload --port 8000
 ```
