@@ -6,6 +6,8 @@ import type {
   OrderCreate,
   OrderListResponse,
   OrderUpdate,
+  Patient,
+  PatientListResponse,
 } from "../types/api";
 
 const STORAGE_KEY_API = "hde.apiBaseUrl";
@@ -124,6 +126,25 @@ export const api = {
       body: fd,
     }).then(handle<ExtractionResponse>);
   },
+
+  // Patients
+  listPatients: (params: { limit?: number; offset?: number; search?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.limit) qs.set("limit", String(params.limit));
+    if (params.offset) qs.set("offset", String(params.offset));
+    if (params.search) qs.set("search", params.search);
+    return fetch(buildUrl(`/api/v1/patients?${qs}`), { headers: authHeaders() }).then(
+      handle<PatientListResponse>
+    );
+  },
+
+  getPatient: (id: string) =>
+    fetch(buildUrl(`/api/v1/patients/${id}`), { headers: authHeaders() }).then(handle<Patient>),
+
+  listPatientOrders: (id: string) =>
+    fetch(buildUrl(`/api/v1/patients/${id}/orders`), { headers: authHeaders() }).then(
+      handle<OrderListResponse>
+    ),
 
   // Activity logs
   listActivityLogs: (params: { limit?: number; offset?: number; pathContains?: string } = {}) => {

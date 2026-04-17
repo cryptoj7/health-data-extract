@@ -1,6 +1,6 @@
 """Pydantic schemas for the Order resource."""
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -15,6 +15,7 @@ class OrderBase(BaseModel):
     notes: Optional[str] = Field(default=None, max_length=4000)
     source_document_name: Optional[str] = Field(default=None, max_length=255)
     extraction_confidence: Optional[str] = Field(default=None, max_length=20)
+    document_metadata: Optional[dict[str, Any]] = None
 
     @field_validator("patient_first_name", "patient_last_name")
     @classmethod
@@ -55,6 +56,7 @@ class OrderRead(OrderBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
+    patient_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

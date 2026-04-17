@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { api } from "../lib/api";
 import type { ExtractionResponse } from "../types/api";
+import { DocumentDetailsView } from "./DocumentDetailsView";
+import { PdfPreview } from "./PdfPreview";
 
 interface Props {
   onOrderCreated?: () => void;
@@ -29,6 +31,7 @@ export function UploadPanel({ onOrderCreated, onToast, onViewOrders }: Props) {
   const [result, setResult] = useState<ExtractionResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [showDetails, setShowDetails] = useState(true);
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -74,8 +77,8 @@ export function UploadPanel({ onOrderCreated, onToast, onViewOrders }: Props) {
           Extract patient data from a PDF
         </h1>
         <p className="mt-3 text-base text-ink-600">
-          Drop a medical order and we&apos;ll pull out the patient&apos;s name and
-          date of birth.
+          Drop a medical order and we&apos;ll pull out the patient, prescriber,
+          diagnoses, and items.
         </p>
       </div>
 
@@ -180,10 +183,7 @@ export function UploadPanel({ onOrderCreated, onToast, onViewOrders }: Props) {
                   strokeWidth="2.5"
                 >
                   <circle cx="12" cy="12" r="10" opacity="0.25" />
-                  <path
-                    d="M22 12a10 10 0 0 1-10 10"
-                    strokeLinecap="round"
-                  />
+                  <path d="M22 12a10 10 0 0 1-10 10" strokeLinecap="round" />
                 </svg>
                 Extracting…
               </>
@@ -210,87 +210,115 @@ export function UploadPanel({ onOrderCreated, onToast, onViewOrders }: Props) {
         )}
       </div>
 
-      {result && (
-        <div className="card mt-6 border-l-4 border-l-emerald-500">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
-                <svg
-                  className="h-4 w-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
+      {(file || result) && (
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          {/* Left: PDF preview (always shown if a file is selected, even
+              before/while extracting — gives the user instant confidence
+              that the right document was uploaded). */}
+          <div>{file && <PdfPreview file={file} maxPages={4} />}</div>
+
+          {/* Right: extraction result (appears after extract). */}
+          <div>
+            {result && (
+              <div className="card border-l-4 border-l-emerald-500 mb-0">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+                      <svg
+                        className="h-4 w-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    </div>
+                    <h2 className="m-0 text-base font-semibold text-ink-900">
+                      Extraction complete
+                    </h2>
+                  </div>
+                  {result.order_id && onViewOrders && (
+                    <button
+                      className="btn-secondary"
+                      type="button"
+                      onClick={onViewOrders}
+                    >
+                      View in Orders →
+                    </button>
+                  )}
+                </div>
+
+                <h3 className="mb-2 text-xs font-semibold tracking-wider text-ink-500 uppercase">
+                  Patient
+                </h3>
+                <dl className="grid grid-cols-[140px_1fr] gap-y-2 gap-x-4 text-sm">
+                  <dt className="font-semibold text-ink-500">First name</dt>
+                  <dd className="text-ink-900">
+                    {result.extracted.first_name ?? (
+                      <span className="text-ink-400">—</span>
+                    )}
+                  </dd>
+                  <dt className="font-semibold text-ink-500">Last name</dt>
+                  <dd className="text-ink-900">
+                    {result.extracted.last_name ?? (
+                      <span className="text-ink-400">—</span>
+                    )}
+                  </dd>
+                  <dt className="font-semibold text-ink-500">Date of birth</dt>
+                  <dd className="text-ink-900">
+                    {result.extracted.date_of_birth ?? (
+                      <span className="text-ink-400">—</span>
+                    )}
+                  </dd>
+                  <dt className="font-semibold text-ink-500">Confidence</dt>
+                  <dd className="flex items-center gap-2">
+                    <span className={confidenceClass(result.extracted.confidence)}>
+                      {result.extracted.confidence}
+                    </span>
+                    <span className="text-ink-500">
+                      via {result.extracted.source}
+                    </span>
+                  </dd>
+                  {result.order_id && (
+                    <>
+                      <dt className="font-semibold text-ink-500">Order ID</dt>
+                      <dd>
+                        <code className="rounded bg-ink-100 px-1.5 py-0.5 text-xs text-ink-700">
+                          {result.order_id}
+                        </code>
+                      </dd>
+                    </>
+                  )}
+                </dl>
+
+                {result.extracted.document && (
+                  <div className="mt-5 border-t border-ink-100 pt-5">
+                    <button
+                      type="button"
+                      onClick={() => setShowDetails((v) => !v)}
+                      className="mb-3 flex w-full items-center justify-between text-left text-xs font-semibold tracking-wider text-ink-500 uppercase hover:text-ink-700"
+                    >
+                      <span>Full document details</span>
+                      <span className="text-base">{showDetails ? "−" : "+"}</span>
+                    </button>
+                    {showDetails && (
+                      <DocumentDetailsView details={result.extracted.document} />
+                    )}
+                  </div>
+                )}
               </div>
-              <h2 className="m-0 text-base font-semibold text-ink-900">
-                Extraction complete
-              </h2>
-            </div>
-            {result.order_id && onViewOrders && (
-              <button
-                className="btn-secondary"
-                type="button"
-                onClick={onViewOrders}
-              >
-                View in Orders →
-              </button>
+            )}
+            {!result && file && (
+              <div className="rounded-xl border border-dashed border-ink-200 p-8 text-center text-sm text-ink-500">
+                Click <span className="font-semibold">Extract patient data</span> above
+                to pull structured fields from this document.
+              </div>
             )}
           </div>
-
-          <dl className="grid grid-cols-[140px_1fr] gap-y-2 gap-x-4 text-sm">
-            <dt className="font-semibold text-ink-500">First name</dt>
-            <dd className="text-ink-900">
-              {result.extracted.first_name ?? (
-                <span className="text-ink-400">—</span>
-              )}
-            </dd>
-            <dt className="font-semibold text-ink-500">Last name</dt>
-            <dd className="text-ink-900">
-              {result.extracted.last_name ?? (
-                <span className="text-ink-400">—</span>
-              )}
-            </dd>
-            <dt className="font-semibold text-ink-500">Date of birth</dt>
-            <dd className="text-ink-900">
-              {result.extracted.date_of_birth ?? (
-                <span className="text-ink-400">—</span>
-              )}
-            </dd>
-            <dt className="font-semibold text-ink-500">Confidence</dt>
-            <dd className="flex items-center gap-2">
-              <span className={confidenceClass(result.extracted.confidence)}>
-                {result.extracted.confidence}
-              </span>
-              <span className="text-ink-500">via {result.extracted.source}</span>
-            </dd>
-            {result.order_id && (
-              <>
-                <dt className="font-semibold text-ink-500">Order ID</dt>
-                <dd>
-                  <code className="rounded bg-ink-100 px-1.5 py-0.5 text-xs text-ink-700">
-                    {result.order_id}
-                  </code>
-                </dd>
-              </>
-            )}
-          </dl>
-
-          {result.raw_text_preview && (
-            <>
-              <h3 className="mt-5 mb-2 text-sm font-semibold text-ink-900">
-                Document text preview
-              </h3>
-              <pre className="max-h-56 overflow-auto rounded-lg border border-ink-200 bg-ink-50 p-3 text-xs whitespace-pre-wrap break-words text-ink-700">
-                {result.raw_text_preview}
-              </pre>
-            </>
-          )}
         </div>
       )}
     </>

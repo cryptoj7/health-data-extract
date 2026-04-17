@@ -9,6 +9,7 @@ from app.models.order import OrderStatus
 from app.schemas.extraction import ExtractionResponse
 from app.schemas.order import OrderCreate
 from app.repositories.order_repository import OrderRepository
+from app.repositories.patient_repository import PatientRepository
 from app.services.extraction import extract_patient_info
 from app.services.extraction_cache import extraction_cache, hash_bytes
 from app.services.pdf_text import extract_text_from_pdf, render_pdf_pages_to_png
@@ -107,6 +108,11 @@ class ExtractionController:
                     ),
                 )
 
+            patient = PatientRepository(db).find_or_create(
+                first_name=extracted.first_name,
+                last_name=extracted.last_name,
+                dob=extracted.date_of_birth,
+            )
             order_payload = OrderCreate(
                 patient_first_name=extracted.first_name,
                 patient_last_name=extracted.last_name,
@@ -114,8 +120,16 @@ class ExtractionController:
                 status=OrderStatus.PENDING,
                 source_document_name=file.filename,
                 extraction_confidence=extracted.confidence,
+                # Persist the rich extracted fields (prescriber, diagnoses,
+                # ordered items, address, etc.) alongside the order so the
+                # full document context is queryable later.
+                document_metadata=(
+                    extracted.document.model_dump(mode="json")
+                    if extracted.document is not None
+                    else None
+                ),
             )
-            order = OrderRepository(db).create(order_payload)
+            order = OrderRepository(db).create(order_payload, patient_id=patient.id)
             order_id = order.id
 
         return ExtractionResponse(

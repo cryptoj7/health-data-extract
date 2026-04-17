@@ -39,8 +39,11 @@ class OrderRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def create(self, payload: OrderCreate) -> Order:
-        order = Order(**payload.model_dump())
+    def create(self, payload: OrderCreate, *, patient_id: str | None = None) -> Order:
+        data = payload.model_dump()
+        if patient_id is not None:
+            data["patient_id"] = patient_id
+        order = Order(**data)
         self.db.add(order)
         self.db.commit()
         self.db.refresh(order)
@@ -75,6 +78,23 @@ class OrderRepository:
 
         stmt = stmt.order_by(Order.created_at.desc()).limit(limit).offset(offset)
 
+        items = self.db.execute(stmt).scalars().all()
+        total = self.db.execute(count_stmt).scalar_one()
+        return list(items), int(total)
+
+    def list_for_patient(
+        self, patient_id: str, *, limit: int = 50, offset: int = 0
+    ) -> Tuple[list[Order], int]:
+        stmt = (
+            select(Order)
+            .where(Order.patient_id == patient_id)
+            .order_by(Order.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        count_stmt = (
+            select(func.count()).select_from(Order).where(Order.patient_id == patient_id)
+        )
         items = self.db.execute(stmt).scalars().all()
         total = self.db.execute(count_stmt).scalar_one()
         return list(items), int(total)

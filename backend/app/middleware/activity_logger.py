@@ -27,6 +27,7 @@ _SKIP_PATHS = {
     "/health",
     "/api/v1/health",
     "/api/v1/health/db",
+    "/api/v1/health/llm",
     "/docs",
     "/redoc",
     "/openapi.json",
@@ -41,6 +42,11 @@ _ROUTE_RULES: list[tuple[str, re.Pattern[str], str, str, Optional[int]]] = [
     ("GET",    re.compile(r"^/api/v1/orders/(?P<id>[^/]+)/?$"),      "order.read",        "order",      1),
     ("PATCH",  re.compile(r"^/api/v1/orders/(?P<id>[^/]+)/?$"),      "order.updated",     "order",      1),
     ("DELETE", re.compile(r"^/api/v1/orders/(?P<id>[^/]+)/?$"),      "order.deleted",     "order",      1),
+    # Patients
+    ("GET",    re.compile(r"^/api/v1/patients/?$"),                  "patient.listed",    "patient",    None),
+    ("GET",    re.compile(r"^/api/v1/patients/(?P<id>[^/]+)/?$"),    "patient.read",      "patient",    1),
+    ("GET",    re.compile(r"^/api/v1/patients/(?P<id>[^/]+)/orders/?$"),
+                                                                     "patient.orders.read", "patient", 1),
     # Extractions
     ("POST",   re.compile(r"^/api/v1/extractions/pdf/?$"),           "extraction.run",    "extraction", None),
     # Activity log (read)

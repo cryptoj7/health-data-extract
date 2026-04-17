@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { OrdersPanel } from "./components/OrdersPanel";
 import { UploadPanel } from "./components/UploadPanel";
+import { PatientsPanel } from "./components/PatientsPanel";
 import { ActivityPanel } from "./components/ActivityPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 
-type Tab = "upload" | "orders" | "activity" | "settings";
+type Tab = "upload" | "orders" | "patients" | "activity" | "settings";
 
 interface Toast {
   msg: string;
@@ -14,6 +15,7 @@ interface Toast {
 const TABS: { id: Tab; label: string }[] = [
   { id: "upload", label: "Upload" },
   { id: "orders", label: "Orders" },
+  { id: "patients", label: "Patients" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings" },
 ];
@@ -57,10 +59,9 @@ export default function App() {
   const refreshActivity = () => setActivityKey((n) => n + 1);
   const goToOrders = () => setTab("orders");
 
-  // Upload screen feels best with a narrower, centered layout. The data screens
-  // need width for tables.
-  const containerWidth =
-    tab === "upload" ? "max-w-2xl" : "max-w-6xl";
+  // Upload screen used to be narrow and centered; with the side-by-side PDF
+  // preview + extraction result it now needs the full width too.
+  const containerWidth = "max-w-6xl";
 
   return (
     <div className="min-h-screen">
@@ -107,17 +108,26 @@ export default function App() {
             onViewOrders={goToOrders}
           />
         )}
-        {tab === "orders" && (
-          <OrdersPanel
-            refreshKey={refreshKey}
-            onToast={(m, k) => {
-              showToast(m, k);
-              refreshActivity();
-            }}
-          />
-        )}
-        {tab === "activity" && <ActivityPanel refreshKey={activityKey} />}
-        {tab === "settings" && <SettingsPanel />}
+      {tab === "orders" && (
+        <OrdersPanel
+          refreshKey={refreshKey}
+          onToast={(m, k) => {
+            showToast(m, k);
+            refreshActivity();
+          }}
+        />
+      )}
+      {tab === "patients" && (
+        <PatientsPanel
+          refreshKey={refreshKey}
+          onToast={(m, k) => {
+            showToast(m, k);
+            refreshActivity();
+          }}
+        />
+      )}
+      {tab === "activity" && <ActivityPanel refreshKey={activityKey} />}
+      {tab === "settings" && <SettingsPanel />}
       </main>
 
       {toast && (

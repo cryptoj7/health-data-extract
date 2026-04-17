@@ -11,6 +11,7 @@ from app.repositories.order_repository import (
     OrderRepository,
     OrderRepositoryProtocol,
 )
+from app.repositories.patient_repository import PatientRepository
 from app.schemas.order import OrderCreate, OrderListResponse, OrderRead, OrderUpdate
 
 
@@ -21,7 +22,15 @@ def _repo(db: Session) -> OrderRepositoryProtocol:
 class OrderController:
     @staticmethod
     def create(db: Session, payload: OrderCreate) -> OrderRead:
-        order = _repo(db).create(payload)
+        # Find-or-create the canonical Patient. Same first+last+dob always
+        # resolves to the same patient row; orders for that person all link
+        # back to it via patient_id.
+        patient = PatientRepository(db).find_or_create(
+            first_name=payload.patient_first_name,
+            last_name=payload.patient_last_name,
+            dob=payload.patient_dob,
+        )
+        order = _repo(db).create(payload, patient_id=patient.id)
         return OrderRead.model_validate(order)
 
     @staticmethod

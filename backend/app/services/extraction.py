@@ -14,7 +14,14 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from app.core.config import get_settings
-from app.schemas.extraction import PatientExtraction
+from app.schemas.extraction import (
+    Address,
+    Diagnosis,
+    DocumentDetails,
+    OrderedItem,
+    PatientExtraction,
+    Prescriber,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +58,131 @@ def _parse_date(s: str) -> Optional[date]:
 # ---------------------------------------------------------------------------
 
 _LLM_SYSTEM = (
-    "You are a precise medical document parser. Extract the patient's first name, "
-    "last name, and date of birth from the provided document text. "
-    "If a value is not clearly present, return null for that field. "
-    "Do not invent or guess values. Respond with strict JSON only."
+    "You are a precise medical document parser. Extract structured data from "
+    "the provided medical/order document. If a value is not clearly present, "
+    "return null (or omit list items) — do not invent, paraphrase, or guess. "
+    "Respond with strict JSON only, matching the schema in the user message."
 )
+
+
+_RICH_JSON_SCHEMA_HINT = """\
+Respond with JSON matching this schema EXACTLY (omit array items rather than
+inventing them; use null for unknown scalars):
+
+{
+  "first_name": string|null,
+  "last_name": string|null,
+  "date_of_birth": "YYYY-MM-DD"|null,
+  "confidence": "high"|"medium"|"low",
+  "document": {
+    "document_type": string|null,
+    "order_date": "YYYY-MM-DD"|null,
+    "patient_address": {
+      "line1": string|null, "line2": string|null,
+      "city": string|null, "state": string|null, "postal_code": string|null
+    }|null,
+    "prescriber": {
+      "name": string|null, "npi": string|null,
+      "phone": string|null, "fax": string|null,
+      "address": { "line1": string|null, "line2": string|null,
+                   "city": string|null, "state": string|null,
+                   "postal_code": string|null }|null
+    }|null,
+    "diagnoses": [ { "code": string|null, "description": string|null }, ... ],
+    "items":     [ { "code": string|null, "description": string|null,
+                     "side": "LT"|"RT"|"Bilateral"|null,
+                     "quantity": integer|null }, ... ]
+  }|null
+}
+"""
+
+
+def _coerce_address(d: Optional[dict]) -> Optional[Address]:
+    if not isinstance(d, dict):
+        return None
+    a = Address(
+        line1=(d.get("line1") or None),
+        line2=(d.get("line2") or None),
+        city=(d.get("city") or None),
+        state=(d.get("state") or None),
+        postal_code=(d.get("postal_code") or None),
+    )
+    return a if any(a.model_dump().values()) else None
+
+
+def _coerce_prescriber(d: Optional[dict]) -> Optional[Prescriber]:
+    if not isinstance(d, dict):
+        return None
+    p = Prescriber(
+        name=(d.get("name") or None),
+        npi=(d.get("npi") or None),
+        phone=(d.get("phone") or None),
+        fax=(d.get("fax") or None),
+        address=_coerce_address(d.get("address")),
+    )
+    return p if any(
+        v is not None for v in [p.name, p.npi, p.phone, p.fax, p.address]
+    ) else None
+
+
+def _coerce_document(d: Optional[dict]) -> Optional[DocumentDetails]:
+    if not isinstance(d, dict):
+        return None
+
+    order_date_raw = d.get("order_date")
+    order_date: Optional[date] = None
+    if order_date_raw:
+        try:
+            order_date = datetime.strptime(order_date_raw, "%Y-%m-%d").date()
+        except ValueError:
+            order_date = _parse_date(order_date_raw)
+
+    diagnoses: list[Diagnosis] = []
+    for raw in d.get("diagnoses") or []:
+        if isinstance(raw, dict) and (raw.get("code") or raw.get("description")):
+            diagnoses.append(
+                Diagnosis(
+                    code=(raw.get("code") or None),
+                    description=(raw.get("description") or None),
+                )
+            )
+
+    items: list[OrderedItem] = []
+    for raw in d.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        if not any([raw.get("code"), raw.get("description")]):
+            continue
+        try:
+            qty = int(raw["quantity"]) if raw.get("quantity") is not None else None
+        except (TypeError, ValueError):
+            qty = None
+        items.append(
+            OrderedItem(
+                code=(raw.get("code") or None),
+                description=(raw.get("description") or None),
+                side=(raw.get("side") or None),
+                quantity=qty,
+            )
+        )
+
+    doc = DocumentDetails(
+        document_type=(d.get("document_type") or None),
+        order_date=order_date,
+        patient_address=_coerce_address(d.get("patient_address")),
+        prescriber=_coerce_prescriber(d.get("prescriber")),
+        diagnoses=diagnoses,
+        items=items,
+    )
+    populated = (
+        doc.document_type
+        or doc.order_date
+        or doc.patient_address
+        or doc.prescriber
+        or doc.diagnoses
+        or doc.items
+    )
+    return doc if populated else None
 
 
 # Models that support the new `reasoning_effort` parameter (GPT-5.x family + o-series).
@@ -84,21 +211,49 @@ def _build_llm_kwargs(settings, *, max_output_tokens: int) -> dict:
         kwargs["temperature"] = 0
     return kwargs
 
-_LLM_USER_TEMPLATE = (
-    "Extract the patient information from the following medical/order document.\n"
-    "Respond with JSON matching this schema EXACTLY:\n"
-    '{{"first_name": string|null, "last_name": string|null, '
-    '"date_of_birth": "YYYY-MM-DD"|null, "confidence": "high"|"medium"|"low"}}\n\n'
-    "Document text:\n---\n{text}\n---"
-)
+
+def _parse_llm_response(content: str, *, source: str) -> PatientExtraction:
+    """Coerce an LLM JSON response into a typed PatientExtraction.
+
+    Handles both the legacy slim schema (first/last/dob only) and the rich
+    schema (with `document` block) — falling back to None for any field
+    that's missing or malformed.
+    """
+    try:
+        data = json.loads(content) if content else {}
+    except json.JSONDecodeError:
+        data = {}
+
+    dob_raw = data.get("date_of_birth")
+    dob: Optional[date] = None
+    if dob_raw:
+        try:
+            dob = datetime.strptime(dob_raw, "%Y-%m-%d").date()
+        except ValueError:
+            dob = _parse_date(dob_raw)
+
+    first = (data.get("first_name") or "").strip() or None
+    last = (data.get("last_name") or "").strip() or None
+    confidence = (data.get("confidence") or "low").lower()
+    if confidence not in {"high", "medium", "low"}:
+        confidence = "low"
+
+    return PatientExtraction(
+        first_name=first,
+        last_name=last,
+        date_of_birth=dob,
+        confidence=confidence,
+        source=source,
+        document=_coerce_document(data.get("document")),
+    )
 
 
 def _extract_with_llm_vision(page_pngs: List[bytes]) -> Optional[PatientExtraction]:
     """Send rendered PDF page images to a vision-capable LLM for extraction.
 
-    Used when the PDF has no extractable text (i.e. it is a scan). Uses GPT-5.4 by
-    default (released 2026-03-05) which accepts images up to 10M pixels uncompressed
-    — much better for medical scans where small text matters.
+    Used when the PDF has no extractable text (i.e. it is a scan). Uses GPT-5.4
+    by default which accepts images up to 10M pixels uncompressed — much better
+    for medical scans where small text matters.
     """
     settings = get_settings()
     if not settings.openai_api_key or not page_pngs:
@@ -120,15 +275,7 @@ def _extract_with_llm_vision(page_pngs: List[bytes]) -> Optional[PatientExtracti
             )
 
         user_content = [
-            {
-                "type": "text",
-                "text": (
-                    "Extract the patient's first name, last name, and date of birth from "
-                    "this medical document. Respond with strict JSON: "
-                    '{"first_name": string|null, "last_name": string|null, '
-                    '"date_of_birth": "YYYY-MM-DD"|null, "confidence": "high"|"medium"|"low"}'
-                ),
-            },
+            {"type": "text", "text": _RICH_JSON_SCHEMA_HINT},
             *image_messages,
         ]
 
@@ -137,31 +284,10 @@ def _extract_with_llm_vision(page_pngs: List[bytes]) -> Optional[PatientExtracti
                 {"role": "system", "content": _LLM_SYSTEM},
                 {"role": "user", "content": user_content},
             ],
-            **_build_llm_kwargs(settings, max_output_tokens=400),
+            **_build_llm_kwargs(settings, max_output_tokens=2000),
         )
-        content = response.choices[0].message.content or "{}"
-        data = json.loads(content)
-
-        dob_raw = data.get("date_of_birth")
-        dob: Optional[date] = None
-        if dob_raw:
-            try:
-                dob = datetime.strptime(dob_raw, "%Y-%m-%d").date()
-            except ValueError:
-                dob = _parse_date(dob_raw)
-
-        first = (data.get("first_name") or "").strip() or None
-        last = (data.get("last_name") or "").strip() or None
-        confidence = (data.get("confidence") or "low").lower()
-        if confidence not in {"high", "medium", "low"}:
-            confidence = "low"
-
-        return PatientExtraction(
-            first_name=first,
-            last_name=last,
-            date_of_birth=dob,
-            confidence=confidence,
-            source="llm_vision",
+        return _parse_llm_response(
+            response.choices[0].message.content or "{}", source="llm_vision"
         )
     except Exception as e:
         logger.warning("LLM vision extraction failed: %s", e)
@@ -182,36 +308,21 @@ def _extract_with_llm(text: str) -> Optional[PatientExtraction]:
         # GPT-5.4 supports 1M tokens of context but we only need a few KB to find a name.
         truncated = text[:12000]
 
+        user_msg = (
+            "Extract the patient information from the following medical/order document.\n"
+            f"{_RICH_JSON_SCHEMA_HINT}\n"
+            f"Document text:\n---\n{truncated}\n---"
+        )
+
         response = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": _LLM_SYSTEM},
-                {"role": "user", "content": _LLM_USER_TEMPLATE.format(text=truncated)},
+                {"role": "user", "content": user_msg},
             ],
-            **_build_llm_kwargs(settings, max_output_tokens=400),
+            **_build_llm_kwargs(settings, max_output_tokens=2000),
         )
-        content = response.choices[0].message.content or "{}"
-        data = json.loads(content)
-
-        dob_raw = data.get("date_of_birth")
-        dob: Optional[date] = None
-        if dob_raw:
-            try:
-                dob = datetime.strptime(dob_raw, "%Y-%m-%d").date()
-            except ValueError:
-                dob = _parse_date(dob_raw)
-
-        first = (data.get("first_name") or "").strip() or None
-        last = (data.get("last_name") or "").strip() or None
-        confidence = (data.get("confidence") or "low").lower()
-        if confidence not in {"high", "medium", "low"}:
-            confidence = "low"
-
-        return PatientExtraction(
-            first_name=first,
-            last_name=last,
-            date_of_birth=dob,
-            confidence=confidence,
-            source="llm",
+        return _parse_llm_response(
+            response.choices[0].message.content or "{}", source="llm"
         )
     except Exception as e:
         logger.warning("LLM extraction failed, falling back to regex: %s", e)

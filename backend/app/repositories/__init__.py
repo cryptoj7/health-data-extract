@@ -13,10 +13,16 @@ from app.repositories.order_repository import (
     OrderRepository,
     OrderRepositoryProtocol,
 )
+from app.repositories.patient_repository import (
+    PatientRepository,
+    PatientRepositoryProtocol,
+)
 
 __all__ = [
     "OrderRepository",
     "OrderRepositoryProtocol",
     "ActivityLogRepository",
     "ActivityLogRepositoryProtocol",
+    "PatientRepository",
+    "PatientRepositoryProtocol",
 ]
