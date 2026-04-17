@@ -1,0 +1,13 @@
+.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+backend/tests
+backend/.env
+*.db
+*.sqlite
+*.sqlite3
+.git
+node_modules
+frontend/node_modules
+README.dev.md

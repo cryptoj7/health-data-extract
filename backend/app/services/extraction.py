@@ -1,0 +1,398 @@
+"""Patient information extraction.
+
+Strategy:
+1. Try LLM (OpenAI) for high-accuracy structured extraction with JSON schema.
+2. Fall back to regex/heuristics on the raw text if LLM isn't configured or fails.
+"""
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import re
+from datetime import date, datetime
+from typing import List, Optional
+
+from app.core.config import get_settings
+from app.schemas.extraction import PatientExtraction
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Date parsing helpers
+# ---------------------------------------------------------------------------
+
+_DATE_FORMATS = [
+    "%Y-%m-%d",
+    "%m/%d/%Y",
+    "%m-%d-%Y",
+    "%m/%d/%y",
+    "%d/%m/%Y",
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%d %B %Y",
+    "%d %b %Y",
+]
+
+
+def _parse_date(s: str) -> Optional[date]:
+    s = s.strip().rstrip(".,;:")
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# LLM extraction
+# ---------------------------------------------------------------------------
+
+_LLM_SYSTEM = (
+    "You are a precise medical document parser. Extract the patient's first name, "
+    "last name, and date of birth from the provided document text. "
+    "If a value is not clearly present, return null for that field. "
+    "Do not invent or guess values. Respond with strict JSON only."
+)
+
+
+# Models that support the new `reasoning_effort` parameter (GPT-5.x family + o-series).
+# Older models (gpt-4o, gpt-4o-mini, gpt-4-turbo) reject this kwarg.
+_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _supports_reasoning(model: str) -> bool:
+    return any(model.startswith(p) for p in _REASONING_MODEL_PREFIXES)
+
+
+def _build_llm_kwargs(settings, *, max_output_tokens: int) -> dict:
+    """Build provider kwargs that work for both reasoning and chat-only models."""
+    kwargs: dict = {
+        "model": settings.openai_model,
+        "response_format": {"type": "json_object"},
+    }
+    if _supports_reasoning(settings.openai_model):
+        # Reasoning models (gpt-5.x, o-series) use `max_completion_tokens` and
+        # accept `reasoning_effort` for latency / cost control.
+        kwargs["max_completion_tokens"] = max_output_tokens
+        kwargs["reasoning_effort"] = settings.openai_reasoning_effort
+    else:
+        # Older chat-only models (gpt-4o, gpt-4o-mini, etc.) use the legacy params.
+        kwargs["max_tokens"] = max_output_tokens
+        kwargs["temperature"] = 0
+    return kwargs
+
+_LLM_USER_TEMPLATE = (
+    "Extract the patient information from the following medical/order document.\n"
+    "Respond with JSON matching this schema EXACTLY:\n"
+    '{{"first_name": string|null, "last_name": string|null, '
+    '"date_of_birth": "YYYY-MM-DD"|null, "confidence": "high"|"medium"|"low"}}\n\n'
+    "Document text:\n---\n{text}\n---"
+)
+
+
+def _extract_with_llm_vision(page_pngs: List[bytes]) -> Optional[PatientExtraction]:
+    """Send rendered PDF page images to a vision-capable LLM for extraction.
+
+    Used when the PDF has no extractable text (i.e. it is a scan). Uses GPT-5.4 by
+    default (released 2026-03-05) which accepts images up to 10M pixels uncompressed
+    — much better for medical scans where small text matters.
+    """
+    settings = get_settings()
+    if not settings.openai_api_key or not page_pngs:
+        return None
+
+    try:
+        from openai import OpenAI  # type: ignore
+
+        client = OpenAI(api_key=settings.openai_api_key, timeout=settings.llm_timeout_seconds)
+
+        image_messages = []
+        for png in page_pngs:
+            b64 = base64.b64encode(png).decode("ascii")
+            image_messages.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                }
+            )
+
+        user_content = [
+            {
+                "type": "text",
+                "text": (
+                    "Extract the patient's first name, last name, and date of birth from "
+                    "this medical document. Respond with strict JSON: "
+                    '{"first_name": string|null, "last_name": string|null, '
+                    '"date_of_birth": "YYYY-MM-DD"|null, "confidence": "high"|"medium"|"low"}'
+                ),
+            },
+            *image_messages,
+        ]
+
+        response = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": _LLM_SYSTEM},
+                {"role": "user", "content": user_content},
+            ],
+            **_build_llm_kwargs(settings, max_output_tokens=400),
+        )
+        content = response.choices[0].message.content or "{}"
+        data = json.loads(content)
+
+        dob_raw = data.get("date_of_birth")
+        dob: Optional[date] = None
+        if dob_raw:
+            try:
+                dob = datetime.strptime(dob_raw, "%Y-%m-%d").date()
+            except ValueError:
+                dob = _parse_date(dob_raw)
+
+        first = (data.get("first_name") or "").strip() or None
+        last = (data.get("last_name") or "").strip() or None
+        confidence = (data.get("confidence") or "low").lower()
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "low"
+
+        return PatientExtraction(
+            first_name=first,
+            last_name=last,
+            date_of_birth=dob,
+            confidence=confidence,
+            source="llm_vision",
+        )
+    except Exception as e:
+        logger.warning("LLM vision extraction failed: %s", e)
+        return None
+
+
+def _extract_with_llm(text: str) -> Optional[PatientExtraction]:
+    settings = get_settings()
+    if not settings.openai_api_key:
+        return None
+
+    try:
+        from openai import OpenAI  # type: ignore
+
+        client = OpenAI(api_key=settings.openai_api_key, timeout=settings.llm_timeout_seconds)
+
+        # Truncate very long documents to keep cost & latency in check.
+        # GPT-5.4 supports 1M tokens of context but we only need a few KB to find a name.
+        truncated = text[:12000]
+
+        response = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": _LLM_SYSTEM},
+                {"role": "user", "content": _LLM_USER_TEMPLATE.format(text=truncated)},
+            ],
+            **_build_llm_kwargs(settings, max_output_tokens=400),
+        )
+        content = response.choices[0].message.content or "{}"
+        data = json.loads(content)
+
+        dob_raw = data.get("date_of_birth")
+        dob: Optional[date] = None
+        if dob_raw:
+            try:
+                dob = datetime.strptime(dob_raw, "%Y-%m-%d").date()
+            except ValueError:
+                dob = _parse_date(dob_raw)
+
+        first = (data.get("first_name") or "").strip() or None
+        last = (data.get("last_name") or "").strip() or None
+        confidence = (data.get("confidence") or "low").lower()
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "low"
+
+        return PatientExtraction(
+            first_name=first,
+            last_name=last,
+            date_of_birth=dob,
+            confidence=confidence,
+            source="llm",
+        )
+    except Exception as e:
+        logger.warning("LLM extraction failed, falling back to regex: %s", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Regex / heuristic extraction (fallback)
+# ---------------------------------------------------------------------------
+
+# Words that signal the end of a name field (i.e. the next labeled section starts)
+_NAME_STOP_WORDS = {
+    "dob",
+    "date",
+    "birth",
+    "born",
+    "mrn",
+    "ssn",
+    "id",
+    "phone",
+    "address",
+    "patient",
+    "gender",
+    "sex",
+    "age",
+    "insurance",
+    "physician",
+    "provider",
+    "doctor",
+    "ordering",
+    "procedure",
+    "diagnosis",
+    "icd",
+    "cpt",
+    "account",
+}
+
+_NAME_LABEL_PATTERNS = [
+    re.compile(r"patient\s*name\s*[:\-]\s*([^\n\r]+)", re.IGNORECASE),
+    re.compile(r"(?<!\w)name\s*[:\-]\s*([^\n\r]+)", re.IGNORECASE),
+    re.compile(r"(?<!\w)patient\s*[:\-]\s*([^\n\r]+)", re.IGNORECASE),
+]
+
+_FIRST_NAME_PATTERN = re.compile(r"first\s*name\s*[:\-]\s*([A-Za-z][A-Za-z'\-]*)", re.IGNORECASE)
+_LAST_NAME_PATTERN = re.compile(r"last\s*name\s*[:\-]\s*([A-Za-z][A-Za-z'\-]*)", re.IGNORECASE)
+
+_DOB_LABEL_PATTERN = re.compile(
+    r"(?:date\s*of\s*birth|d\.?\s*o\.?\s*b\.?|birth\s*date|born)\s*[:\-]?\s*"
+    r"([A-Za-z0-9,\.\-/ ]{6,40})",
+    re.IGNORECASE,
+)
+
+_LASTNAME_FIRSTNAME_PATTERN = re.compile(
+    r"(?:patient\s*)?name\s*[:\-]\s*([A-Za-z'\-]+)\s*,\s*([A-Za-z'\-]+)", re.IGNORECASE
+)
+
+
+def _clean_name_tokens(s: str) -> list[str]:
+    """Split a captured name string into clean tokens, stopping at label words.
+
+    Drops middle initials (single letters or letter+period).
+    """
+    tokens: list[str] = []
+    for raw in re.split(r"\s+", s.strip()):
+        token = raw.strip(",.;:")
+        if not token:
+            continue
+        # Stop if we hit the start of another labeled field
+        if token.lower().rstrip(":") in _NAME_STOP_WORDS:
+            break
+        # Drop if it looks like a label-with-colon like "DOB:"
+        if ":" in token:
+            head = token.split(":", 1)[0]
+            if head.lower() in _NAME_STOP_WORDS:
+                break
+        # Skip middle initials (single letter, optionally with period)
+        if re.fullmatch(r"[A-Za-z]\.?", token):
+            continue
+        # Names should look like names — letters, hyphens, apostrophes only
+        if not re.fullmatch(r"[A-Za-z][A-Za-z'\-]*", token):
+            break
+        tokens.append(token)
+    return tokens
+
+
+def _extract_with_regex(text: str) -> PatientExtraction:
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    dob: Optional[date] = None
+
+    # 1) Explicit "First Name: X" and "Last Name: Y" labels
+    fn_match = _FIRST_NAME_PATTERN.search(text)
+    ln_match = _LAST_NAME_PATTERN.search(text)
+    if fn_match:
+        first_name = fn_match.group(1).strip()
+    if ln_match:
+        last_name = ln_match.group(1).strip()
+
+    # 2) "Name: Last, First"
+    if not (first_name and last_name):
+        m = _LASTNAME_FIRSTNAME_PATTERN.search(text)
+        if m:
+            last_name, first_name = m.group(1).strip(), m.group(2).strip()
+
+    # 3) "Patient Name: First [Middle] Last"
+    if not (first_name and last_name):
+        for pat in _NAME_LABEL_PATTERNS:
+            m = pat.search(text)
+            if not m:
+                continue
+            tokens = _clean_name_tokens(m.group(1))
+            if len(tokens) >= 2:
+                first_name = first_name or tokens[0]
+                last_name = last_name or tokens[-1]
+                break
+            elif len(tokens) == 1 and not first_name:
+                first_name = tokens[0]
+
+    # DOB
+    for m in _DOB_LABEL_PATTERN.finditer(text):
+        candidate = m.group(1).strip().split("\n")[0]
+        for i in range(len(candidate), 5, -1):
+            parsed = _parse_date(candidate[:i])
+            if parsed:
+                dob = parsed
+                break
+        if dob:
+            break
+
+    if first_name and last_name and dob:
+        confidence: str = "medium"
+    elif first_name and last_name:
+        confidence = "low"
+    else:
+        confidence = "low"
+
+    return PatientExtraction(
+        first_name=first_name,
+        last_name=last_name,
+        date_of_birth=dob,
+        confidence=confidence,
+        source="regex",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+
+def extract_patient_info(
+    text: str, *, page_pngs: Optional[List[bytes]] = None
+) -> PatientExtraction:
+    """Extract patient info from a document.
+
+    Strategy:
+      1. If we have meaningful text, try the text LLM, then regex fallback.
+      2. If no text (scanned PDF) and we have page images, try LLM vision.
+      3. Always return a PatientExtraction (fields may be None).
+    """
+    has_text = bool(text and text.strip())
+
+    if has_text:
+        llm_result = _extract_with_llm(text)
+        if llm_result and (
+            llm_result.first_name or llm_result.last_name or llm_result.date_of_birth
+        ):
+            if not llm_result.date_of_birth:
+                regex_result = _extract_with_regex(text)
+                if regex_result.date_of_birth:
+                    llm_result.date_of_birth = regex_result.date_of_birth
+            return llm_result
+
+        regex_result = _extract_with_regex(text)
+        if regex_result.first_name or regex_result.last_name or regex_result.date_of_birth:
+            return regex_result
+
+    # No usable text — try vision if we have rendered images and an API key
+    if page_pngs:
+        vision_result = _extract_with_llm_vision(page_pngs)
+        if vision_result:
+            return vision_result
+
+    return PatientExtraction(confidence="low", source="regex")
