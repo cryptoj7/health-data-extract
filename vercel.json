@@ -8,7 +8,8 @@
       "runtime": "@vercel/python@4.3.1",
       "memory": 1024,
       "maxDuration": 30,
-      "includeFiles": "backend/app/**"
+      "includeFiles": "backend/app/**",
+      "excludeFiles": "{frontend/**,**/node_modules/**,.vercel/**,**/__pycache__/**,**/.venv/**,**/.pytest_cache/**,backend/tests/**,backend/requirements-dev.txt,*.db,*.sqlite,*.sqlite3,RECAP.md,.git/**}"
     }
   },
   "rewrites": [
