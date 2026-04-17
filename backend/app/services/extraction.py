@@ -248,15 +248,20 @@ def _parse_llm_response(content: str, *, source: str) -> PatientExtraction:
     )
 
 
-def _extract_with_llm_vision(page_pngs: List[bytes]) -> Optional[PatientExtraction]:
-    """Send rendered PDF page images to a vision-capable LLM for extraction.
+def _extract_with_llm_pdf(pdf_bytes: bytes, *, filename: str = "document.pdf") -> Optional[PatientExtraction]:
+    """Send the raw PDF directly to OpenAI via the Responses API.
 
-    Used when the PDF has no extractable text (i.e. it is a scan). Uses GPT-5.4
-    by default which accepts images up to 10M pixels uncompressed — much better
-    for medical scans where small text matters.
+    GPT-5.4 (and other vision-capable models) extract both text AND page
+    images from the PDF server-side, so we don't need to render anything
+    ourselves. This is what lets the production function stay slim — we
+    don't ship `pypdfium2` or `Pillow`.
+
+    Used as the high-quality path for both scanned PDFs (where text
+    extraction returns nothing) and digital PDFs where we want the model
+    to see the layout, not just a flat text dump.
     """
     settings = get_settings()
-    if not settings.openai_api_key or not page_pngs:
+    if not settings.openai_api_key or not pdf_bytes:
         return None
 
     try:
@@ -264,33 +269,39 @@ def _extract_with_llm_vision(page_pngs: List[bytes]) -> Optional[PatientExtracti
 
         client = OpenAI(api_key=settings.openai_api_key, timeout=settings.llm_timeout_seconds)
 
-        image_messages = []
-        for png in page_pngs:
-            b64 = base64.b64encode(png).decode("ascii")
-            image_messages.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{b64}"},
-                }
-            )
+        b64 = base64.b64encode(pdf_bytes).decode("ascii")
 
-        user_content = [
-            {"type": "text", "text": _RICH_JSON_SCHEMA_HINT},
-            *image_messages,
-        ]
-
-        response = client.chat.completions.create(
-            messages=[
+        kwargs: dict = {
+            "model": settings.openai_model,
+            "input": [
                 {"role": "system", "content": _LLM_SYSTEM},
-                {"role": "user", "content": user_content},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": _RICH_JSON_SCHEMA_HINT},
+                        {
+                            "type": "input_file",
+                            "filename": filename,
+                            "file_data": f"data:application/pdf;base64,{b64}",
+                        },
+                    ],
+                },
             ],
-            **_build_llm_kwargs(settings, max_output_tokens=2000),
-        )
-        return _parse_llm_response(
-            response.choices[0].message.content or "{}", source="llm_vision"
-        )
+            "text": {"format": {"type": "json_object"}},
+            "max_output_tokens": 2000,
+        }
+        if _supports_reasoning(settings.openai_model):
+            kwargs["reasoning"] = {"effort": settings.openai_reasoning_effort}
+
+        response = client.responses.create(**kwargs)
+
+        # `response.output_text` is the SDK's convenience accessor that
+        # concatenates all text outputs into a single string. It's the
+        # right choice when we asked for `text.format = json_object`.
+        content = (getattr(response, "output_text", None) or "").strip() or "{}"
+        return _parse_llm_response(content, source="llm_pdf")
     except Exception as e:
-        logger.warning("LLM vision extraction failed: %s", e)
+        logger.warning("LLM PDF extraction failed: %s", e)
         return None
 
 
@@ -474,13 +485,19 @@ def _extract_with_regex(text: str) -> PatientExtraction:
 
 
 def extract_patient_info(
-    text: str, *, page_pngs: Optional[List[bytes]] = None
+    text: str,
+    *,
+    pdf_bytes: Optional[bytes] = None,
+    pdf_filename: str = "document.pdf",
 ) -> PatientExtraction:
     """Extract patient info from a document.
 
     Strategy:
-      1. If we have meaningful text, try the text LLM, then regex fallback.
-      2. If no text (scanned PDF) and we have page images, try LLM vision.
+      1. If we have meaningful text, try the chat-completions LLM (cheap path),
+         then regex fallback.
+      2. If no usable text *and* we have the original PDF bytes + an OpenAI key,
+         send the PDF directly via the Responses API (model handles all OCR &
+         page-image extraction server-side; no need for us to render).
       3. Always return a PatientExtraction (fields may be None).
     """
     has_text = bool(text and text.strip())
@@ -500,10 +517,10 @@ def extract_patient_info(
         if regex_result.first_name or regex_result.last_name or regex_result.date_of_birth:
             return regex_result
 
-    # No usable text — try vision if we have rendered images and an API key
-    if page_pngs:
-        vision_result = _extract_with_llm_vision(page_pngs)
-        if vision_result:
-            return vision_result
+    # No usable text — send the PDF directly to OpenAI for vision-grade OCR.
+    if pdf_bytes:
+        pdf_result = _extract_with_llm_pdf(pdf_bytes, filename=pdf_filename)
+        if pdf_result:
+            return pdf_result
 
     return PatientExtraction(confidence="low", source="regex")

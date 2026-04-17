@@ -12,7 +12,7 @@ from app.repositories.order_repository import OrderRepository
 from app.repositories.patient_repository import PatientRepository
 from app.services.extraction import extract_patient_info
 from app.services.extraction_cache import extraction_cache, hash_bytes
-from app.services.pdf_text import extract_text_from_pdf, render_pdf_pages_to_png
+from app.services.pdf_text import extract_text_from_pdf
 
 
 class ExtractionController:
@@ -72,22 +72,15 @@ class ExtractionController:
                     detail=f"Could not read PDF contents: {e}",
                 )
 
-            # Render page images for vision fallback when text is empty (scanned
-            # PDFs). Resolution and page-count are env-configurable so we can keep
-            # the memory footprint small in serverless (Vercel: 1 GB / 30 s) while
-            # letting local devs crank it up for sharper OCR on tiny print.
-            page_pngs: list[bytes] = []
-            if not text.strip() and settings.openai_api_key:
-                try:
-                    page_pngs = render_pdf_pages_to_png(
-                        contents,
-                        max_pages=settings.vision_max_pages,
-                        scale=settings.vision_render_scale,
-                    )
-                except Exception:
-                    page_pngs = []
-
-            extracted = extract_patient_info(text, page_pngs=page_pngs)
+            # When text extraction returns nothing (scanned PDF), pass the PDF
+            # bytes through to the LLM. OpenAI's Responses API accepts PDFs
+            # directly and handles OCR + page-image extraction server-side, so
+            # we don't need to render anything ourselves.
+            extracted = extract_patient_info(
+                text,
+                pdf_bytes=contents,
+                pdf_filename=file.filename or "document.pdf",
+            )
             extraction_cache.put(content_hash, extracted)
         else:
             extracted = cached

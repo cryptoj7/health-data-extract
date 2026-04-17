@@ -52,13 +52,6 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = Field(default=45)
     llm_max_retries: int = Field(default=2)
 
-    # Vision rendering — controls how much memory and time the PDF-to-image step
-    # takes before sending to the LLM. Defaults are tuned for serverless (Vercel
-    # Hobby = 1 GB memory, 30 s timeout). Bump locally if you want sharper OCR on
-    # tiny print: VISION_RENDER_SCALE=3.0, VISION_MAX_PAGES=4.
-    vision_render_scale: float = Field(default=2.0)
-    vision_max_pages: int = Field(default=2)
-
     @property
     def cors_origin_list(self) -> List[str]:
         if self.cors_origins.strip() == "*":

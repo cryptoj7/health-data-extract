@@ -73,11 +73,46 @@ _schema_ready = False
 
 
 def init_db() -> None:
-    """Create all tables registered on `Base.metadata`. Idempotent."""
-    # Importing the models package registers every model on Base.metadata
-    from app import models  # noqa: F401
+    """Create all tables and additively add any missing columns.
+
+    Strategy:
+      1. `create_all` creates tables that don't exist yet (idempotent).
+      2. `_add_missing_columns` runs ALTER TABLE ADD COLUMN for any column
+         our models declare that the DB doesn't have. This is the
+         "MVP migration" — covers the 99% case (we only ever add columns,
+         never rename or drop), works on Postgres + SQLite, no Alembic
+         required. For destructive schema changes, use real migrations.
+    """
+    from app import models  # noqa: F401  — register models on Base.metadata
 
     Base.metadata.create_all(bind=engine)
+    _add_missing_columns()
+
+
+def _add_missing_columns() -> None:
+    """Detect and add columns the model declares but the DB is missing."""
+    from sqlalchemy import inspect
+    from sqlalchemy.schema import CreateColumn
+
+    insp = inspect(engine)
+    dialect = engine.dialect
+
+    with engine.begin() as conn:
+        for table_name, table in Base.metadata.tables.items():
+            if not insp.has_table(table_name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table_name)}
+            for column in table.columns:
+                if column.name in existing:
+                    continue
+                # Build a portable column DDL spec
+                col_spec = CreateColumn(column).compile(dialect=dialect)
+                logger.info(
+                    "Adding missing column %s.%s", table_name, column.name
+                )
+                conn.exec_driver_sql(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN {col_spec}'
+                )
 
 
 def ensure_schema() -> None:

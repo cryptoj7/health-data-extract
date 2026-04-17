@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api } from "../lib/api";
-import type { Order, OrderCreate, OrderStatus } from "../types/api";
+import { DocumentDetailsView } from "./DocumentDetailsView";
+import type { Order, OrderCreate, OrderStatus, OrderedItem } from "../types/api";
 
 const STATUSES: OrderStatus[] = ["pending", "processing", "completed", "cancelled"];
 
@@ -28,6 +29,76 @@ const confidenceBadge = (c: string | null) => {
   return "badge-low";
 };
 
+function PdfIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </svg>
+  );
+}
+
+function OriginCell({ order }: { order: Order }) {
+  // Extracted orders carry an extraction_confidence (set when the upload
+  // endpoint persists them). Hand-created orders never have it.
+  if (order.extraction_confidence) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <PdfIcon className="h-4 w-4 text-brand-700" />
+        <span className={confidenceBadge(order.extraction_confidence)}>
+          {order.extraction_confidence}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full border border-ink-200 bg-white px-2 py-0.5 text-[11px] font-semibold tracking-wider text-ink-600 uppercase">
+      Manual
+    </span>
+  );
+}
+
+function describeItem(item: OrderedItem): string {
+  // Prefer description; fall back to code; fall back to a placeholder.
+  const desc = (item.description || "").trim();
+  const code = (item.code || "").trim();
+  if (desc && code) return `${code} · ${desc}`;
+  return desc || code || "(unnamed item)";
+}
+
+function ItemsCell({ order }: { order: Order }) {
+  const items = order.document_metadata?.items ?? [];
+  if (items.length === 0) {
+    return <span className="text-ink-400">—</span>;
+  }
+  const first = items[0];
+  const more = items.length - 1;
+  return (
+    <div className="flex max-w-xs items-center gap-1.5">
+      <span
+        className="truncate text-ink-900"
+        title={items.map(describeItem).join("\n")}
+      >
+        {describeItem(first)}
+      </span>
+      {more > 0 && (
+        <span className="inline-flex shrink-0 items-center rounded-full bg-ink-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-700">
+          +{more}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function OrdersPanel({ refreshKey, onToast }: Props) {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
@@ -47,6 +118,11 @@ export function OrdersPanel({ refreshKey, onToast }: Props) {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<Order | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const toggleExpand = (id: string) => {
+    setExpandedId((current) => (current === id ? null : id));
+  };
 
   const load = async () => {
     setLoading(true);
@@ -279,10 +355,12 @@ export function OrdersPanel({ refreshKey, onToast }: Props) {
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase tracking-wider text-ink-500">
+                  <th className="border-b border-ink-200 py-3 pr-3 w-6"></th>
                   <th className="border-b border-ink-200 py-3 pr-3">Patient</th>
                   <th className="border-b border-ink-200 py-3 pr-3">DOB</th>
                   <th className="border-b border-ink-200 py-3 pr-3">Status</th>
-                  <th className="border-b border-ink-200 py-3 pr-3">Source</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Origin</th>
+                  <th className="border-b border-ink-200 py-3 pr-3">Items</th>
                   <th className="border-b border-ink-200 py-3 pr-3">Created</th>
                   <th className="border-b border-ink-200 py-3 pr-3"></th>
                 </tr>
@@ -291,6 +369,7 @@ export function OrdersPanel({ refreshKey, onToast }: Props) {
                 {orders.map((o) =>
                   editingId === o.id && editForm ? (
                     <tr key={o.id} className="bg-amber-50/40">
+                      <td className="border-b border-ink-100 py-3 pr-3"></td>
                       <td className="border-b border-ink-100 py-3 pr-3">
                         <div className="flex gap-1">
                           <input
@@ -349,6 +428,7 @@ export function OrdersPanel({ refreshKey, onToast }: Props) {
                       <td className="border-b border-ink-100 py-3 pr-3 text-ink-500">
                         {o.source_document_name ?? "—"}
                       </td>
+                      <td className="border-b border-ink-100 py-3 pr-3 text-ink-400">—</td>
                       <td className="border-b border-ink-100 py-3 pr-3 text-ink-500">
                         {new Date(o.created_at).toLocaleString()}
                       </td>
@@ -370,59 +450,87 @@ export function OrdersPanel({ refreshKey, onToast }: Props) {
                       </td>
                     </tr>
                   ) : (
-                    <tr
-                      key={o.id}
-                      className="transition-colors hover:bg-ink-50/60"
-                    >
-                      <td className="border-b border-ink-100 py-3 pr-3 align-top">
-                        <div className="font-semibold text-ink-900">
-                          {o.patient_first_name} {o.patient_last_name}
-                        </div>
-                        {o.notes && (
-                          <div className="mt-0.5 text-xs text-ink-500">
-                            {o.notes}
+                    <Fragment key={o.id}>
+                      <tr
+                        className={`cursor-pointer transition-colors hover:bg-ink-50/60 ${
+                          expandedId === o.id ? "bg-brand-50/40" : ""
+                        }`}
+                        onClick={() => toggleExpand(o.id)}
+                      >
+                        <td className="border-b border-ink-100 py-3 pr-3 align-top text-ink-400">
+                          {expandedId === o.id ? "▾" : "▸"}
+                        </td>
+                        <td className="border-b border-ink-100 py-3 pr-3 align-top">
+                          <div className="font-semibold text-ink-900">
+                            {o.patient_first_name} {o.patient_last_name}
                           </div>
-                        )}
-                      </td>
-                      <td className="border-b border-ink-100 py-3 pr-3 align-top text-ink-700">
-                        {o.patient_dob ?? <span className="text-ink-400">—</span>}
-                      </td>
-                      <td className="border-b border-ink-100 py-3 pr-3 align-top">
-                        <span className={statusBadge(o.status)}>{o.status}</span>
-                      </td>
-                      <td className="border-b border-ink-100 py-3 pr-3 align-top text-ink-500">
-                        {o.source_document_name ?? "—"}
-                        {o.extraction_confidence && (
-                          <>
-                            {" "}
-                            <span
-                              className={confidenceBadge(o.extraction_confidence)}
+                          {o.notes && (
+                            <div className="mt-0.5 text-xs text-ink-500">
+                              {o.notes}
+                            </div>
+                          )}
+                        </td>
+                        <td className="border-b border-ink-100 py-3 pr-3 align-top text-ink-700">
+                          {o.patient_dob ?? <span className="text-ink-400">—</span>}
+                        </td>
+                        <td className="border-b border-ink-100 py-3 pr-3 align-top">
+                          <span className={statusBadge(o.status)}>{o.status}</span>
+                        </td>
+                        <td className="border-b border-ink-100 py-3 pr-3 align-top">
+                          <OriginCell order={o} />
+                        </td>
+                        <td className="border-b border-ink-100 py-3 pr-3 align-top text-sm">
+                          <ItemsCell order={o} />
+                        </td>
+                        <td className="border-b border-ink-100 py-3 pr-3 align-top text-ink-500 whitespace-nowrap">
+                          {new Date(o.created_at).toLocaleString()}
+                        </td>
+                        <td
+                          className="border-b border-ink-100 py-3 pr-3 align-top"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              className="btn-ghost"
+                              onClick={() => startEdit(o)}
                             >
-                              {o.extraction_confidence}
-                            </span>
-                          </>
-                        )}
-                      </td>
-                      <td className="border-b border-ink-100 py-3 pr-3 align-top text-ink-500">
-                        {new Date(o.created_at).toLocaleString()}
-                      </td>
-                      <td className="border-b border-ink-100 py-3 pr-3 align-top">
-                        <div className="flex justify-end gap-1.5">
-                          <button
-                            className="btn-ghost"
-                            onClick={() => startEdit(o)}
+                              Edit
+                            </button>
+                            <button
+                              className="btn-danger"
+                              onClick={() => remove(o.id)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {expandedId === o.id && (
+                        <tr>
+                          <td
+                            colSpan={8}
+                            className="border-b border-ink-100 bg-ink-50/40 px-4 py-4"
                           >
-                            Edit
-                          </button>
-                          <button
-                            className="btn-danger"
-                            onClick={() => remove(o.id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                            {o.source_document_name && (
+                              <div className="mb-4 flex items-center gap-2 text-sm">
+                                <PdfIcon className="h-4 w-4 text-brand-700" />
+                                <span className="text-ink-500">Source file:</span>
+                                <span className="font-medium text-ink-900">
+                                  {o.source_document_name}
+                                </span>
+                              </div>
+                            )}
+                            {o.document_metadata ? (
+                              <DocumentDetailsView details={o.document_metadata} />
+                            ) : (
+                              <div className="text-sm text-ink-500">
+                                No extracted document details for this order.
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   )
                 )}
               </tbody>
