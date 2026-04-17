@@ -6,7 +6,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, ensure_schema
 from app.repositories.activity_log_repository import ActivityLogRepository
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ class ActivityLoggerMiddleware(BaseHTTPMiddleware):
 
                     request_id = getattr(request.state, "request_id", None)
 
+                    ensure_schema()
                     db = SessionLocal()
                     try:
                         ActivityLogRepository(db).create(

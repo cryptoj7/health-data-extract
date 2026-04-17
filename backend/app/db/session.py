@@ -1,10 +1,14 @@
 """Database engine, session factory, and FastAPI dependency."""
+import logging
+import threading
 from typing import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -57,17 +61,47 @@ class Base(DeclarativeBase):
     """Base class for all ORM models."""
 
 
+# --- Lazy schema initialisation ---------------------------------------------
+# Vercel's @vercel/python ASGI adapter (and most serverless ASGI adapters) do
+# NOT reliably fire FastAPI lifespan events. Relying on lifespan to run
+# `create_all` means tables never get created in serverless. So we run it on
+# first use of `get_db` instead — once per warm container, idempotent, and
+# tolerant of failure (we log and let the actual query produce the real error).
+
+_schema_lock = threading.Lock()
+_schema_ready = False
+
+
+def init_db() -> None:
+    """Create all tables registered on `Base.metadata`. Idempotent."""
+    # Importing the models package registers every model on Base.metadata
+    from app import models  # noqa: F401
+
+    Base.metadata.create_all(bind=engine)
+
+
+def ensure_schema() -> None:
+    """Run `init_db` exactly once per process (thread-safe, fail-tolerant)."""
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        try:
+            init_db()
+            logger.info("Database schema ready (%s)", _database_url.split("://")[0])
+            _schema_ready = True
+        except Exception:
+            # Don't block the request — let the real query surface the error
+            # (e.g. wrong URL, network problem) with a meaningful message.
+            logger.exception("ensure_schema failed; continuing without marking ready")
+
+
 def get_db() -> Generator[Session, None, None]:
+    ensure_schema()
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-
-def init_db() -> None:
-    """Create tables. For the MVP we use create_all; Alembic migrations are wired up too."""
-    # Import models so they are registered with the metadata
-    from app.models import order, activity_log  # noqa: F401
-
-    Base.metadata.create_all(bind=engine)

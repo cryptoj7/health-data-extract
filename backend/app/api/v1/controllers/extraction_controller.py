@@ -62,12 +62,17 @@ class ExtractionController:
             )
 
         # Render page images for vision fallback when text is empty (scanned PDFs).
-        # GPT-5.4 accepts images up to 10M pixels uncompressed, so render at scale=3.0
-        # (~216 DPI) for sharper OCR on small text in medical scans.
+        # Resolution and page-count are env-configurable so we can keep the memory
+        # footprint small in serverless (Vercel: 1 GB / 30 s) while letting local
+        # devs crank it up for sharper OCR on tiny print.
         page_pngs: list[bytes] = []
         if not text.strip() and settings.openai_api_key:
             try:
-                page_pngs = render_pdf_pages_to_png(contents, max_pages=4, scale=3.0)
+                page_pngs = render_pdf_pages_to_png(
+                    contents,
+                    max_pages=settings.vision_max_pages,
+                    scale=settings.vision_render_scale,
+                )
             except Exception:
                 # Non-fatal — we still try the regex/text path
                 page_pngs = []
